@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'SERVER_USER', defaultValue: 'root', description: 'Enter server username')
+        password(name: 'SERVER_PASS', description: 'Enter server password')
+        string(name: 'SERVER_IP', defaultValue: '', description: 'Enter server IP')
+        choice(name: 'BUILD_METHOD', choices: ['omnia-artifactory', 'github'], description: 'Select build method')
+        booleanParam(name: 'PULL_OMNIA_CORE', defaultValue: true, description: 'Pull omnia_core')
+        booleanParam(name: 'PULL_OMNIA_PULP', defaultValue: true, description: 'Pull omnia_pulp')
+        booleanParam(name: 'PULL_OMNIA_PCS', defaultValue: true, description: 'Pull omnia_pcs')
+        string(name: 'OMNIA_BRANCH', defaultValue: 'staging', description: 'Enter branch')
+    }
+    stages {
+        stage('Prepare /root/automation & Pull Code') {
+            steps {
+                sh '''
+                    sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP "
+                        rm -rf /root/automation &&
+                        mkdir -p /root/automation &&
+                        cd /root/automation &&
+                        git clone -b automation https://github.com/dell/omnia-artifactory.git
+                    "
+                '''
+            }
+        }
+
+        stage('Store Parameters in File') {
+            steps {
+                script {
+                    def images = []
+                    if (params.PULL_OMNIA_CORE) images.add("core")
+                    if (params.PULL_OMNIA_PULP) images.add("pulp")
+                    if (params.PULL_OMNIA_PCS) images.add("pcs")
+
+                    def content = """
+SERVER_USER=${params.SERVER_USER}
+SERVER_PASS=${params.SERVER_PASS}
+SERVER_IP=${params.SERVER_IP}
+BUILD_METHOD=${params.BUILD_METHOD}
+IMAGES=${images.join(',')}
+OMNIA_BRANCH=${params.OMNIA_BRANCH}
+"""
+
+                    sh """
+                        sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP '
+                            echo "${content}" > /root/automation/build_params.txt
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Run Build or Notify') {
+            steps {
+                script {
+                    if (params.BUILD_METHOD == "omnia-artifactory") {
+                        sh """
+                            sshpass -p "$SERVER_PASS" ssh -o StrictHostKeyChecking=no $SERVER_USER@$SERVER_IP '
+                                python3 /root/code.py
+                            '
+                        """
+                    } else {
+                        echo "User selected option2 (github), it is not developed yet"
+                    }
+                }
+            }
+        }
+    }
+}
